@@ -63,9 +63,13 @@ wechat-draft --file article.md --title "标题" --generate-cover --cover-output 
 
 ## 配置
 
-需要配置微信公众号凭证和 Gemini API Key：
+需要配置微信公众号凭证。Gemini API Key 可选（用于封面图生成）：
 
 ```bash
+# 基础配置（公众号 API）
+wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
+
+# 完整配置（含封面图生成）
 wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET --gemini-key YOUR_GEMINI_KEY
 ```
 
@@ -74,8 +78,12 @@ wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET --gemini-key YOUR_GE
 ```bash
 export WECHAT_APPID="your_appid"
 export WECHAT_SECRET="your_secret"
-export GEMINI_API_KEY="your_gemini_key"
+export GEMINI_API_KEY="your_gemini_key"  # 可选
 ```
+
+**说明：**
+- 未配置 Gemini API Key 时，封面图生成功能会自动跳过
+- 可通过 `--thumb` 手动指定封面图
 
 ## 流程说明
 

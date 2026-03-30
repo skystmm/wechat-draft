@@ -132,7 +132,7 @@ function loadConfig() {
   const config = {
     appid: process.env.WECHAT_APPID,
     secret: process.env.WECHAT_SECRET,
-    geminiKey: process.env.GEMINI_API_KEY,
+    geminiKey: process.env.GEMINI_API_KEY || null,  // 可选
     defaultAuthor: null,
     defaultThumb: null
   };
@@ -147,6 +147,12 @@ function loadConfig() {
     console.error('请运行: wechat-draft config --appid YOUR_ID --secret YOUR_SECRET');
     console.error('或设置环境变量: WECHAT_APPID, WECHAT_SECRET');
     process.exit(1);
+  }
+
+  // geminiKey 是可选的，用于封面图生成
+  if (!config.geminiKey) {
+    console.log('提示: 未配置 Gemini API Key，封面图生成功能将跳过');
+    console.log('      可手动指定封面图(--thumb)或配置 geminiKey');
   }
 
   return config;
@@ -414,18 +420,28 @@ async function main() {
     let thumbMediaId = null;
     let thumbPath = options.thumb || config.defaultThumb;
 
-    // 自动生成封面图
-    if (options.generateCover && config.geminiKey) {
-      const outputPath = options.coverOutput || 'cover.png';
-      console.log('✓ 正在生成封面图...');
-      
-      thumbPath = await mcpClient.generateCoverFromContent(
-        markdown, 
-        config.geminiKey, 
-        outputPath,
-        options.coverStyle
-      );
-      console.log('✓ 封面图生成完成:', thumbPath);
+    // 自动生成封面图（可选，需要 Gemini API Key）
+    if (options.generateCover) {
+      if (config.geminiKey) {
+        const outputPath = options.coverOutput || 'cover.png';
+        console.log('✓ 正在生成封面图...');
+        
+        try {
+          thumbPath = await mcpClient.generateCoverFromContent(
+            markdown, 
+            config.geminiKey, 
+            outputPath,
+            options.coverStyle
+          );
+          console.log('✓ 封面图生成完成:', thumbPath);
+        } catch (error) {
+          console.log('⚠ 封面图生成失败:', error.message);
+          console.log('  将跳过封面图，继续创建草稿...');
+        }
+      } else {
+        console.log('⚠ 未配置 Gemini API Key，跳过封面图生成');
+        console.log('  可通过 --thumb 手动指定封面图，或配置 geminiKey');
+      }
     }
 
     // 上传封面图
