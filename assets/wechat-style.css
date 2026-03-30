@@ -1,0 +1,101 @@
+/* 微信公众号样式参考 */
+/* 注意：微信公众号要求样式内联，此文件仅供参考 */
+
+/* 正文 */
+.p-wechat {
+  margin: 15px 0;
+  line-height: 1.8;
+  color: #333;
+  font-size: 16px;
+}
+
+/* 标题 */
+.h1-wechat {
+  font-size: 24px;
+  font-weight: bold;
+  margin: 30px 0 15px;
+  color: #333;
+}
+
+.h2-wechat {
+  font-size: 20px;
+  font-weight: bold;
+  margin: 25px 0 12px;
+  color: #333;
+}
+
+.h3-wechat {
+  font-size: 18px;
+  font-weight: bold;
+  margin: 20px 0 10px;
+  color: #333;
+}
+
+/* 引用 */
+.blockquote-wechat {
+  border-left: 4px solid #42b983;
+  padding-left: 15px;
+  margin: 15px 0;
+  color: #666;
+  font-style: italic;
+}
+
+/* 代码块 */
+.code-block-wechat {
+  background: #f6f6f6;
+  padding: 15px;
+  border-radius: 5px;
+  overflow-x: auto;
+  margin: 15px 0;
+}
+
+.code-inline-wechat {
+  background: #f6f6f6;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 14px;
+}
+
+/* 列表 */
+.ul-wechat {
+  padding-left: 20px;
+  margin: 15px 0;
+}
+
+.li-wechat {
+  margin: 8px 0;
+}
+
+/* 链接 */
+.a-wechat {
+  color: #42b983;
+  text-decoration: none;
+}
+
+/* 图片 */
+.img-wechat {
+  max-width: 100%;
+  height: auto;
+  margin: 15px 0;
+  display: block;
+}
+
+/* 表格 */
+.table-wechat {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 15px 0;
+}
+
+.th-wechat {
+  background: #f6f6f6;
+  padding: 10px;
+  border: 1px solid #ddd;
+  font-weight: bold;
+}
+
+.td-wechat {
+  padding: 10px;
+  border: 1px solid #ddd;
+}
