@@ -111,12 +111,28 @@ function printHelp() {
   --cover-output      封面图输出路径（默认 cover.png）
 
 配置:
-  wechat-draft config --appid YOUR_ID --secret YOUR_SECRET --gemini-key YOUR_KEY
+  wechat-draft config --appid YOUR_ID --secret YOUR_SECRET
+
+图像生成配置（可选）:
+  在 ~/.wechat-draft.json 中添加:
+  {
+    "imageGeneration": {
+      "provider": "gemini",        // gemini/openai/bailian/siliconflow
+      "apiKey": "YOUR_API_KEY",
+      "model": "可选，默认使用推荐模型",
+      "endpoint": "可选，自定义 API 端点"
+    }
+  }
+
+支持的图像生成服务:
+  gemini      - Google Gemini（免费额度有限）
+  openai      - OpenAI DALL-E（需要付费）
+  bailian     - 百炼（阿里云）
+  siliconflow - SiliconFlow
 
 环境变量:
   WECHAT_APPID    公众号 AppID
   WECHAT_SECRET   公众号 AppSecret
-  GEMINI_API_KEY  Gemini API Key（用于生成封面图）
 
 图片风格说明:
   minimalist  - 极简扁平风格（默认）
@@ -132,7 +148,6 @@ function loadConfig() {
   const config = {
     appid: process.env.WECHAT_APPID,
     secret: process.env.WECHAT_SECRET,
-    geminiKey: process.env.GEMINI_API_KEY || null,  // 可选
     defaultAuthor: null,
     defaultThumb: null
   };
@@ -149,10 +164,11 @@ function loadConfig() {
     process.exit(1);
   }
 
-  // geminiKey 是可选的，用于封面图生成
-  if (!config.geminiKey) {
-    console.log('提示: 未配置 Gemini API Key，封面图生成功能将跳过');
-    console.log('      可手动指定封面图(--thumb)或配置 geminiKey');
+  // 图像生成配置（可选）
+  // 格式: { provider, apiKey, model, endpoint }
+  if (!config.imageGeneration) {
+    console.log('提示: 未配置图像生成，封面图生成功能将跳过');
+    console.log('      可通过配置 imageGeneration 启用');
   }
 
   return config;
@@ -420,18 +436,27 @@ async function main() {
     let thumbMediaId = null;
     let thumbPath = options.thumb || config.defaultThumb;
 
-    // 自动生成封面图（可选，需要 Gemini API Key）
+    // 自动生成封面图（可选，需要配置 imageGeneration）
     if (options.generateCover) {
-      if (config.geminiKey) {
+      if (config.imageGeneration) {
         const outputPath = options.coverOutput || 'cover.png';
         console.log('✓ 正在生成封面图...');
+        console.log('  提供者:', config.imageGeneration.provider || 'gemini');
+        console.log('  模型:', config.imageGeneration.model || '默认');
         
         try {
+          const imageConfig = {
+            provider: config.imageGeneration.provider,
+            apiKey: config.imageGeneration.apiKey,
+            model: config.imageGeneration.model,
+            endpoint: config.imageGeneration.endpoint,
+            style: options.coverStyle
+          };
+          
           thumbPath = await mcpClient.generateCoverFromContent(
             markdown, 
-            config.geminiKey, 
-            outputPath,
-            options.coverStyle
+            imageConfig, 
+            outputPath
           );
           console.log('✓ 封面图生成完成:', thumbPath);
         } catch (error) {
@@ -439,8 +464,9 @@ async function main() {
           console.log('  将跳过封面图，继续创建草稿...');
         }
       } else {
-        console.log('⚠ 未配置 Gemini API Key，跳过封面图生成');
-        console.log('  可通过 --thumb 手动指定封面图，或配置 geminiKey');
+        console.log('⚠ 未配置图像生成服务，跳过封面图生成');
+        console.log('  可通过 --thumb 手动指定封面图');
+        console.log('  或在配置文件中添加 imageGeneration 配置');
       }
     }
 
