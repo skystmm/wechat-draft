@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 
 /**
- * MCP Client - 调用 Gemini API 实现内容润色
- * 模拟 wechat_editor MCP 服务器的功能
+ * MCP Client - 调用 Gemini API 实现封面图生成
+ * 根据文章内容生成公众号头图
  */
 
 const https = require('https');
+const fs = require('fs');
 
 // Gemini API 配置
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_TEXT_MODEL = 'gemini-2.0-flash';
+const GEMINI_IMAGE_MODEL = 'gemini-2.0-flash-exp-image-generation';
 
 /**
  * 调用 Gemini API
  */
-async function callGemini(apiKey, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+async function callGemini(apiKey, prompt, modelId = GEMINI_TEXT_MODEL) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
   
   const body = JSON.stringify({
     contents: [{
@@ -61,62 +63,164 @@ async function callGemini(apiKey, prompt) {
 }
 
 /**
- * 润色内容 - 适合公众号风格
+ * 调用 Gemini 图像生成 API
  */
-async function polishContent(content, apiKey, personalPrompt = null) {
-  const personalHabit = personalPrompt 
-    ? `\n\n用户的写作习惯/要求:\n${personalPrompt}` 
-    : '';
+async function callGeminiImage(apiKey, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${apiKey}`;
+  
+  // Gemini 支持的比例: "1:1", "3:4", "4:3", "9:16", "16:9"
+  // 2.35:1 接近 21:9，但 Gemini 不支持，使用 16:9 作为近似
+  const body = JSON.stringify({
+    contents: [{
+      parts: [{ text: prompt }]
+    }],
+    generationConfig: {
+      responseModalities: ["IMAGE", "TEXT"],
+      responseMimeType: "text/plain"
+    }
+  });
 
-  const prompt = `你是一位专业的微信公众号编辑。请润色以下 Markdown 内容，使其更具吸引力、流畅和专业。
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    
+    const reqOptions = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
 
-关键要求（减少"AI 感"）：
-1. 使用自然、人性化的表达。避免 AI 输出常见的过于结构化或重复的句式（如"总之"、"此外"、"值得注意的是"）。
-2. 使用对话式但专业的语气。想象你是资深作家在与朋友或忠实读者交流。
-3. 句子长度和结构要多样化，创造更好的节奏感。
-4. 使用生动、具体的词汇，而非通用形容词。
-5. 如果原文有特定个性，保留并强化它，而不是抹平成通用风格。
-6. 避免过度使用列表，除非确实必要。
-${personalHabit}
+    const req = https.request(reqOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.error) {
+            reject(new Error(json.error.message));
+          } else {
+            // 查找图片数据
+            const parts = json.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
+              if (part.inlineData) {
+                return resolve({
+                  mimeType: part.inlineData.mimeType,
+                  base64: part.inlineData.data
+                });
+              }
+            }
+            // 如果没有图片，检查是否有文本拒绝
+            const textPart = parts.find(p => p.text);
+            if (textPart) {
+              reject(new Error(`Gemini refused to generate image: ${textPart.text}`));
+            } else {
+              reject(new Error('No image data received from Gemini'));
+            }
+          }
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
 
-保持 Markdown 格式。不要用 markdown 代码块包裹输出（如 \`\`\`markdown），直接返回原始 markdown 内容。
-
-内容：
-${content}`;
-
-  return await callGemini(apiKey, prompt);
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 /**
- * 总结内容 - 生成摘要（≤50字）
+ * 根据文章内容生成视觉提示词
+ * @param {string} content 文章内容
+ * @param {string} apiKey Gemini API Key
+ * @param {string} style 图片风格：minimalist | threeD | vector | cyberpunk | ink
  */
-async function summarizeContent(content, apiKey) {
-  const prompt = `将以下内容总结为简短的摘要。
-严格要求：摘要不得超过 50 字。
-此摘要将用于微信公众号的"摘要"字段，应具有吸引力和专业性。
-仅返回文本，不要 markdown 格式。
+async function generateVisualPrompt(content, apiKey, style = 'minimalist') {
+  const styleDescriptions = {
+    minimalist: 'Minimalist, flat vector illustration, suitable for a professional tech blog header, vibrant colors, clean composition',
+    threeD: 'Professional 3D isometric render, high detail, soft studio lighting, Octane render style, modern aesthetic',
+    vector: 'Modern flat vector art, clean lines, bold geometric shapes, professional illustration',
+    cyberpunk: 'Cyberpunk aesthetic, neon lighting, futuristic city vibes, high contrast, vibrant blue and pink tones',
+    ink: 'Elegant Chinese ink wash painting style, traditional yet modern, minimalist brush strokes, artistic atmosphere'
+  };
 
-内容：
-${content}`;
+  const styleDesc = styleDescriptions[style] || styleDescriptions.minimalist;
 
-  return await callGemini(apiKey, prompt);
+  const prompt = `Based on the following article content, write a detailed visual description (prompt) for an AI image generator to create a cover image.
+  
+The image will be used as a WeChat Official Account (公众号) header image.
+IMPORTANT requirements:
+1. Aspect ratio should be approximately 2.35:1 (wide cinematic format, similar to movie posters)
+2. The style MUST be: "${styleDesc}"
+3. The image should NOT contain any text or words
+4. Focus on visual metaphors and symbolic elements that represent the article's theme
+5. Suitable for a professional tech/social media article
+
+Return ONLY the English prompt description. Do not include markdown or quotes.
+
+Content:
+${content.substring(0, 2000)}`;
+
+  const result = await callGemini(apiKey, prompt);
+  // 清理引号
+  return result.replace(/^["']|["']$/g, '').trim();
 }
 
 /**
- * 扩展内容
+ * 生成封面图
+ * @param {string} visualPrompt 视觉提示词
+ * @param {string} apiKey Gemini API Key
+ * @returns {Object} { mimeType, base64 }
  */
-async function expandContent(content, apiKey) {
-  const prompt = `以下是一个草稿。请扩展关键点，添加更多相关细节、示例或表情符号，使其成为完整的微信公众号文章段落。保持 Markdown 格式。
+async function generateCoverImage(visualPrompt, apiKey) {
+  return await callGeminiImage(apiKey, visualPrompt);
+}
 
-内容：
-${content}`;
+/**
+ * 保存图片到文件
+ * @param {string} base64 Base64 编码的图片数据
+ * @param {string} mimeType MIME 类型
+ * @param {string} outputPath 输出路径
+ */
+function saveImage(base64, mimeType, outputPath) {
+  const buffer = Buffer.from(base64, 'base64');
+  fs.writeFileSync(outputPath, buffer);
+  return outputPath;
+}
 
-  return await callGemini(apiKey, prompt);
+/**
+ * 根据文章内容生成封面图（完整流程）
+ * @param {string} content 文章内容
+ * @param {string} apiKey Gemini API Key
+ * @param {string} outputPath 输出图片路径
+ * @param {string} style 图片风格
+ * @returns {string} 图片文件路径
+ */
+async function generateCoverFromContent(content, apiKey, outputPath, style = 'minimalist') {
+  // 1. 生成视觉提示词
+  console.log('  正在生成视觉提示词...');
+  const visualPrompt = await generateVisualPrompt(content, apiKey, style);
+  console.log('  提示词:', visualPrompt.substring(0, 100) + '...');
+  
+  // 2. 生成图片
+  console.log('  正在生成图片...');
+  const imageData = await generateCoverImage(visualPrompt, apiKey);
+  
+  // 3. 保存图片
+  saveImage(imageData.base64, imageData.mimeType, outputPath);
+  console.log('  图片已保存:', outputPath);
+  
+  return outputPath;
 }
 
 module.exports = {
-  polishContent,
-  summarizeContent,
-  expandContent,
+  generateVisualPrompt,
+  generateCoverImage,
+  generateCoverFromContent,
+  saveImage,
   callGemini
 };

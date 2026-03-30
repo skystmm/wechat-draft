@@ -3,7 +3,7 @@
 /**
  * 微信公众号草稿工具
  * 将 Markdown 转换为微信公众号格式并提交到草稿箱
- * 支持 MCP 润色（调用 Gemini API）
+ * 支持根据文章内容自动生成封面图
  */
 
 const fs = require('fs');
@@ -29,10 +29,9 @@ function parseArgs() {
     thumb: null,
     content: null,
     command: null,
-    polish: false,
-    autoSummary: false,
-    expand: false,
-    prompt: null
+    generateCover: false,
+    coverStyle: 'minimalist',
+    coverOutput: null
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -56,17 +55,14 @@ function parseArgs() {
       case '--thumb':
         options.thumb = args[++i];
         break;
-      case '--polish':
-        options.polish = true;
+      case '--generate-cover':
+        options.generateCover = true;
         break;
-      case '--auto-summary':
-        options.autoSummary = true;
+      case '--cover-style':
+        options.coverStyle = args[++i];
         break;
-      case '--expand':
-        options.expand = true;
-        break;
-      case '--prompt':
-        options.prompt = args[++i];
+      case '--cover-output':
+        options.coverOutput = args[++i];
         break;
       case 'config':
         options.command = 'config';
@@ -100,21 +96,19 @@ function printHelp() {
 
 用法:
   wechat-draft --file article.md --title "标题"
-  wechat-draft --file article.md --title "标题" --polish
-  wechat-draft --file article.md --title "标题" --polish --prompt "幽默风格"
+  wechat-draft --file article.md --title "标题" --generate-cover
 
 选项:
   --file, -f     Markdown 文件路径
   --title, -t    文章标题（必填）
   --author, -a   作者名
-  --digest, -d   摘要（手动指定）
-  --thumb        封面图路径
+  --digest, -d   摘要
+  --thumb        封面图路径（手动指定）
 
-MCP/润色选项:
-  --polish       使用 MCP 润色内容
-  --prompt       润色时的自定义提示词
-  --auto-summary 使用 MCP 自动生成摘要
-  --expand       使用 MCP 扩展内容
+封面图生成:
+  --generate-cover    根据文章内容自动生成封面图
+  --cover-style       图片风格（minimalist/threeD/vector/cyberpunk/ink）
+  --cover-output      封面图输出路径（默认 cover.png）
 
 配置:
   wechat-draft config --appid YOUR_ID --secret YOUR_SECRET --gemini-key YOUR_KEY
@@ -122,7 +116,14 @@ MCP/润色选项:
 环境变量:
   WECHAT_APPID    公众号 AppID
   WECHAT_SECRET   公众号 AppSecret
-  GEMINI_API_KEY  Gemini API Key（用于润色）
+  GEMINI_API_KEY  Gemini API Key（用于生成封面图）
+
+图片风格说明:
+  minimalist  - 极简扁平风格（默认）
+  threeD      - 3D 等距渲染
+  vector      - 现代矢量艺术
+  cyberpunk   - 赛博朋克风格
+  ink         - 中国水墨画风格
 `);
 }
 
@@ -239,7 +240,7 @@ async function uploadImage(accessToken, imagePath) {
   const body = [
     `--${boundary}`,
     `Content-Disposition: form-data; name="media"; filename="${filename}"`,
-    'Content-Type: image/jpeg',
+    'Content-Type: image/png',
     '',
     imageData.toString('binary'),
     `--${boundary}--`
@@ -265,7 +266,6 @@ async function uploadImage(accessToken, imagePath) {
 
 // Markdown 转微信 HTML
 function markdownToWechatHtml(markdown) {
-  // 简单的 Markdown 解析
   let html = markdown;
 
   // 标题
@@ -314,7 +314,6 @@ function markdownToWechatHtml(markdown) {
   // 清理空段落
   html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
 
-  // 添加容器样式
   return `<section style="font-size: 16px; line-height: 1.8; color: #333; max-width: 100%; word-wrap: break-word;">${html}</section>`;
 }
 
@@ -384,7 +383,6 @@ async function main() {
   } else if (options.content) {
     markdown = options.content;
   } else {
-    // 从标准输入读取
     markdown = await new Promise((resolve) => {
       let data = '';
       process.stdin.setEncoding('utf8');
@@ -399,33 +397,10 @@ async function main() {
   }
 
   try {
-    // 加载配置
     const config = loadConfig();
 
     console.log('正在处理...');
     console.log('标题:', options.title);
-
-    // MCP 润色
-    if (options.polish && config.geminiKey) {
-      console.log('✓ 正在润色内容...');
-      markdown = await mcpClient.polishContent(markdown, config.geminiKey, options.prompt);
-      console.log('✓ 内容润色完成');
-    }
-
-    // MCP 扩展
-    if (options.expand && config.geminiKey) {
-      console.log('✓ 正在扩展内容...');
-      markdown = await mcpClient.expandContent(markdown, config.geminiKey);
-      console.log('✓ 内容扩展完成');
-    }
-
-    // 自动摘要
-    let digest = options.digest;
-    if (options.autoSummary && config.geminiKey) {
-      console.log('✓ 正在生成摘要...');
-      digest = await mcpClient.summarizeContent(markdown, config.geminiKey);
-      console.log('✓ 摘要生成完成:', digest);
-    }
 
     // 转换 Markdown
     const html = markdownToWechatHtml(markdown);
@@ -437,19 +412,33 @@ async function main() {
 
     // 处理封面图
     let thumbMediaId = null;
-    if (options.thumb || config.defaultThumb) {
-      const thumbPath = options.thumb || config.defaultThumb;
-      if (fs.existsSync(thumbPath)) {
-        thumbMediaId = await uploadImage(accessToken, thumbPath);
-        console.log('✓ 封面图已上传:', thumbMediaId);
-      }
+    let thumbPath = options.thumb || config.defaultThumb;
+
+    // 自动生成封面图
+    if (options.generateCover && config.geminiKey) {
+      const outputPath = options.coverOutput || 'cover.png';
+      console.log('✓ 正在生成封面图...');
+      
+      thumbPath = await mcpClient.generateCoverFromContent(
+        markdown, 
+        config.geminiKey, 
+        outputPath,
+        options.coverStyle
+      );
+      console.log('✓ 封面图生成完成:', thumbPath);
+    }
+
+    // 上传封面图
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      thumbMediaId = await uploadImage(accessToken, thumbPath);
+      console.log('✓ 封面图已上传:', thumbMediaId);
     }
 
     // 创建草稿
     const mediaId = await createDraft(accessToken, {
       title: options.title,
       author: options.author || config.defaultAuthor || '',
-      digest: digest || '',
+      digest: options.digest || '',
       content: html,
       thumb_media_id: thumbMediaId
     });
