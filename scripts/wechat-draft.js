@@ -3,13 +3,16 @@
 /**
  * 微信公众号草稿工具
  * 将 Markdown 转换为微信公众号格式并提交到草稿箱
+ * 支持 MCP 润色（调用 Gemini API）
  */
 
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
 const crypto = require('crypto');
+
+// 引入 MCP 客户端
+const mcpClient = require('./mcp-client.js');
 
 // 配置
 const CONFIG_PATH = path.join(process.env.HOME || '', '.wechat-draft.json');
@@ -25,7 +28,11 @@ function parseArgs() {
     digest: null,
     thumb: null,
     content: null,
-    command: null
+    command: null,
+    polish: false,
+    autoSummary: false,
+    expand: false,
+    prompt: null
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -49,6 +56,18 @@ function parseArgs() {
       case '--thumb':
         options.thumb = args[++i];
         break;
+      case '--polish':
+        options.polish = true;
+        break;
+      case '--auto-summary':
+        options.autoSummary = true;
+        break;
+      case '--expand':
+        options.expand = true;
+        break;
+      case '--prompt':
+        options.prompt = args[++i];
+        break;
       case 'config':
         options.command = 'config';
         break;
@@ -57,6 +76,9 @@ function parseArgs() {
         break;
       case '--secret':
         options.secret = args[++i];
+        break;
+      case '--gemini-key':
+        options.geminiKey = args[++i];
         break;
       case '--help':
       case '-h':
@@ -78,22 +100,29 @@ function printHelp() {
 
 用法:
   wechat-draft --file article.md --title "标题"
-  cat article.md | wechat-draft --title "标题"
-  wechat-draft config --appid YOUR_ID --secret YOUR_SECRET
+  wechat-draft --file article.md --title "标题" --polish
+  wechat-draft --file article.md --title "标题" --polish --prompt "幽默风格"
 
 选项:
   --file, -f     Markdown 文件路径
-  --title, -t    文章标题
+  --title, -t    文章标题（必填）
   --author, -a   作者名
-  --digest, -d   摘要
+  --digest, -d   摘要（手动指定）
   --thumb        封面图路径
 
+MCP/润色选项:
+  --polish       使用 MCP 润色内容
+  --prompt       润色时的自定义提示词
+  --auto-summary 使用 MCP 自动生成摘要
+  --expand       使用 MCP 扩展内容
+
 配置:
-  wechat-draft config --appid YOUR_ID --secret YOUR_SECRET
+  wechat-draft config --appid YOUR_ID --secret YOUR_SECRET --gemini-key YOUR_KEY
 
 环境变量:
-  WECHAT_APPID   公众号 AppID
-  WECHAT_SECRET  公众号 AppSecret
+  WECHAT_APPID    公众号 AppID
+  WECHAT_SECRET   公众号 AppSecret
+  GEMINI_API_KEY  Gemini API Key（用于润色）
 `);
 }
 
@@ -102,6 +131,7 @@ function loadConfig() {
   const config = {
     appid: process.env.WECHAT_APPID,
     secret: process.env.WECHAT_SECRET,
+    geminiKey: process.env.GEMINI_API_KEY,
     defaultAuthor: null,
     defaultThumb: null
   };
@@ -130,6 +160,7 @@ function saveConfig(options) {
   
   if (options.appid) config.appid = options.appid;
   if (options.secret) config.secret = options.secret;
+  if (options.geminiKey) config.geminiKey = options.geminiKey;
   
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   console.log('配置已保存到:', CONFIG_PATH);
@@ -234,7 +265,7 @@ async function uploadImage(accessToken, imagePath) {
 
 // Markdown 转微信 HTML
 function markdownToWechatHtml(markdown) {
-  // 简单的 Markdown 解析（生产环境建议使用 marked.js）
+  // 简单的 Markdown 解析
   let html = markdown;
 
   // 标题
@@ -269,7 +300,7 @@ function markdownToWechatHtml(markdown) {
   // 链接
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color: #42b983; text-decoration: none;">$1</a>');
 
-  // 图片（保留占位符，后续处理）
+  // 图片
   html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
     if (src.startsWith('http')) {
       return `<img src="${src}" alt="${alt}" style="max-width: 100%; height: auto; margin: 15px 0;" />`;
@@ -374,6 +405,28 @@ async function main() {
     console.log('正在处理...');
     console.log('标题:', options.title);
 
+    // MCP 润色
+    if (options.polish && config.geminiKey) {
+      console.log('✓ 正在润色内容...');
+      markdown = await mcpClient.polishContent(markdown, config.geminiKey, options.prompt);
+      console.log('✓ 内容润色完成');
+    }
+
+    // MCP 扩展
+    if (options.expand && config.geminiKey) {
+      console.log('✓ 正在扩展内容...');
+      markdown = await mcpClient.expandContent(markdown, config.geminiKey);
+      console.log('✓ 内容扩展完成');
+    }
+
+    // 自动摘要
+    let digest = options.digest;
+    if (options.autoSummary && config.geminiKey) {
+      console.log('✓ 正在生成摘要...');
+      digest = await mcpClient.summarizeContent(markdown, config.geminiKey);
+      console.log('✓ 摘要生成完成:', digest);
+    }
+
     // 转换 Markdown
     const html = markdownToWechatHtml(markdown);
     console.log('✓ Markdown 转换完成');
@@ -396,7 +449,7 @@ async function main() {
     const mediaId = await createDraft(accessToken, {
       title: options.title,
       author: options.author || config.defaultAuthor || '',
-      digest: options.digest || '',
+      digest: digest || '',
       content: html,
       thumb_media_id: thumbMediaId
     });
