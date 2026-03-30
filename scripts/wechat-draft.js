@@ -253,37 +253,55 @@ async function getAccessToken(config) {
   return result.access_token;
 }
 
-// 上传图片获取 media_id
+// 上传图片获取 media_id（永久素材，草稿需要永久素材）
 async function uploadImage(accessToken, imagePath) {
-  const boundary = '----WebKitFormBoundary' + crypto.randomBytes(16).toString('hex');
-  const imageData = fs.readFileSync(imagePath);
-  const filename = path.basename(imagePath);
+  // 使用 curl 上传（更可靠）
+  const { execSync } = require('child_process');
   
-  const body = [
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="media"; filename="${filename}"`,
-    'Content-Type: image/png',
-    '',
-    imageData.toString('binary'),
-    `--${boundary}--`
-  ].join('\r\n');
+  try {
+    const url = `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${accessToken}&type=image`;
+    const result = execSync(`curl -s "${url}" -F "media=@${imagePath}"`, { encoding: 'utf8' });
+    const json = JSON.parse(result);
+    
+    if (json.errcode) {
+      throw new Error(`上传图片失败: ${json.errmsg}`);
+    }
+    
+    return json.media_id;
+  } catch (error) {
+    // 如果 curl 失败，尝试原生方式
+    console.log('  curl 上传失败，尝试原生方式...');
+    
+    const boundary = '----WebKitFormBoundary' + crypto.randomBytes(16).toString('hex');
+    const imageData = fs.readFileSync(imagePath);
+    const filename = path.basename(imagePath);
+    
+    const body = [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="media"; filename="${filename}"`,
+      'Content-Type: image/png',
+      '',
+      imageData.toString('binary'),
+      `--${boundary}--`
+    ].join('\r\n');
 
-  const url = `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${accessToken}&type=image`;
-  
-  const result = await request(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      'Content-Length': Buffer.byteLength(body, 'binary')
-    },
-    body: body
-  });
+    const url = `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${accessToken}&type=image`;
+    
+    const result = await request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': Buffer.byteLength(body, 'binary')
+      },
+      body: body
+    });
 
-  if (result.errcode) {
-    throw new Error(`上传图片失败: ${result.errmsg}`);
+    if (result.errcode) {
+      throw new Error(`上传图片失败: ${result.errmsg}`);
+    }
+
+    return result.media_id;
   }
-
-  return result.media_id;
 }
 
 // Markdown 转微信 HTML
