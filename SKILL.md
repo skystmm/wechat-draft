@@ -1,14 +1,15 @@
 ---
 name: wechat-draft
-description: 将 Markdown 转换为微信公众号格式并提交到草稿箱。支持自动生成封面图（多种模型可选）、图片上传、样式转换。触发词：微信草稿、公众号文章、markdown转微信、wechat draft、公众号封面图。
+description: 将 Markdown 转换为微信公众号格式并提交到草稿箱。支持矩阵号（多账号）、自动生成封面图（多种模型可选）、图片上传、样式转换。触发词：微信草稿、公众号文章、markdown转微信、wechat draft、公众号封面图、矩阵号。
 ---
 
-# 微信公众号草稿 Skill
+# 微信公众号草稿 Skill - 支持矩阵号
 
-将 Markdown 文章转换为微信公众号格式，支持自动生成封面图并提交到公众号草稿箱。
+将 Markdown 文章转换为微信公众号格式，支持多账号（矩阵号）、自动生成封面图并提交到公众号草稿箱。
 
 ## 功能
 
+- **矩阵号支持**：多账号配置，轻松管理多个公众号
 - **自动生成封面图**：支持多种图像生成模型
 - **多模型支持**：Gemini、OpenAI DALL-E、百炼、SiliconFlow
 - **可配置**：自由选择模型、API 端点
@@ -21,14 +22,17 @@ description: 将 Markdown 转换为微信公众号格式并提交到草稿箱。
 ### 基础用法
 
 ```bash
-# 基础转换（手动指定封面图）
+# 使用默认账号
 wechat-draft --file article.md --title "文章标题" --thumb cover.png
+
+# 使用指定账号（矩阵号）
+wechat-draft --file article.md --title "标题" --account tech
 
 # 自动生成封面图
 wechat-draft --file article.md --title "标题" --generate-cover
 
-# 指定封面图风格
-wechat-draft --file article.md --title "标题" --generate-cover --cover-style cyberpunk
+# 查看已配置账号
+wechat-draft list
 ```
 
 ### 参数说明
@@ -40,6 +44,7 @@ wechat-draft --file article.md --title "标题" --generate-cover --cover-style c
 | `--author, -a` | 作者名 |
 | `--digest, -d` | 摘要 |
 | `--thumb` | 封面图路径（手动指定） |
+| `--account` | 矩阵号账号名称 |
 
 **封面图生成参数**
 
@@ -51,10 +56,46 @@ wechat-draft --file article.md --title "标题" --generate-cover --cover-style c
 
 ## 配置
 
-### 公众号 API 配置（必填）
+### 单账号配置
 
 ```bash
 wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
+```
+
+### 矩阵号配置（多账号）
+
+```bash
+# 配置主账号
+wechat-draft config --account main --appid wx主号ID --secret 主号Secret --account-name "主账号"
+
+# 配置技术号
+wechat-draft config --account tech --appid wx技术号ID --secret 技术号Secret --account-name "技术团队号"
+```
+
+配置文件示例 (`~/.wechat-draft.json`)：
+
+```json
+{
+  "accounts": {
+    "main": {
+      "appid": "wxabc123...",
+      "secret": "主号Secret",
+      "name": "主账号",
+      "defaultAuthor": "编辑部"
+    },
+    "tech": {
+      "appid": "wxdef456...",
+      "secret": "技术号Secret",
+      "name": "技术团队",
+      "defaultAuthor": "技术团队"
+    }
+  },
+  "defaultAccount": "main",
+  "imageGeneration": {
+    "provider": "gemini",
+    "apiKey": "YOUR_API_KEY"
+  }
+}
 ```
 
 ### 图像生成配置（可选）
@@ -63,8 +104,6 @@ wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
 
 ```json
 {
-  "appid": "wx...",
-  "secret": "...",
   "imageGeneration": {
     "provider": "gemini",
     "apiKey": "YOUR_API_KEY",
@@ -83,43 +122,6 @@ wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
 | `bailian` | 百炼（阿里云） | wanx-v1 |
 | `siliconflow` | SiliconFlow | FLUX.1-schnell |
 
-**配置示例：**
-
-```json
-// Gemini
-{
-  "imageGeneration": {
-    "provider": "gemini",
-    "apiKey": "AIza..."
-  }
-}
-
-// OpenAI
-{
-  "imageGeneration": {
-    "provider": "openai",
-    "apiKey": "sk-..."
-  }
-}
-
-// 百炼
-{
-  "imageGeneration": {
-    "provider": "bailian",
-    "apiKey": "sk-..."
-  }
-}
-
-// 自定义端点
-{
-  "imageGeneration": {
-    "provider": "gemini",
-    "apiKey": "...",
-    "endpoint": "https://your-proxy.com/v1beta"
-  }
-}
-```
-
 ## 图片风格
 
 | 风格 | 说明 |
@@ -127,7 +129,7 @@ wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
 | `minimalist` | 极简扁平风格（默认） |
 | `threeD` | 3D 等距渲染 |
 | `vector` | 现代矢量艺术 |
-| `cyberpunk` | 赛博朋克风格 |
+| `cyberpunk` | 赞博朋克风格 |
 | `ink` | 中国水墨画风格 |
 
 ## 注意事项
@@ -136,6 +138,7 @@ wechat-draft config --appid YOUR_APPID --secret YOUR_SECRET
 2. **IP 白名单**：需将服务器 IP 添加到公众号后台
 3. **图像生成**：未配置时跳过，不影响草稿创建
 4. **图片大小**：不超过 2MB
+5. **矩阵号 Token 缓存**：每个账号的 access_token 独立缓存
 
 ## 脚本位置
 
