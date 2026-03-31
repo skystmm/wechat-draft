@@ -1,9 +1,10 @@
-# 微信公众号草稿 Skill
+# 微信公众号草稿 Skill - 支持矩阵号
 
-将 Markdown 文章一键转换为微信公众号格式，支持自动生成封面图并提交到公众号草稿箱。
+将 Markdown 文章一键转换为微信公众号格式，支持多账号（矩阵号）、自动生成封面图并提交到公众号草稿箱。
 
 ## 功能特性
 
+- **矩阵号支持**：多账号配置，轻松管理多个公众号
 - **Markdown → 微信公众号格式**：自动转换样式，生成内联 HTML
 - **自动生成封面图**：根据文章标题和内容智能生成封面
 - **多图像模型支持**：Gemini、OpenAI DALL-E、百炼、SiliconFlow
@@ -28,9 +29,23 @@ npm install
 
 ### 3. 配置微信公众号 API
 
+**单账号模式：**
+
 ```bash
-# 设置 AppID 和 AppSecret
 node scripts/wechat-draft.js config --appid YOUR_APPID --secret YOUR_SECRET
+```
+
+**矩阵号模式（多账号）：**
+
+```bash
+# 配置主账号
+node scripts/wechat-draft.js config --account main --appid wx主号ID --secret 主号Secret --account-name "主账号"
+
+# 配置技术号
+node scripts/wechat-draft.js config --account tech --appid wx技术号ID --secret 技术号Secret --account-name "技术团队号"
+
+# 配置新闻号
+node scripts/wechat-draft.js config --account news --appid wx新闻号ID --secret 新闻号Secret --account-name "新闻资讯号"
 ```
 
 ### 4. 配置图像生成（可选）
@@ -39,8 +54,6 @@ node scripts/wechat-draft.js config --appid YOUR_APPID --secret YOUR_SECRET
 
 ```json
 {
-  "appid": "wx...",
-  "secret": "...",
   "imageGeneration": {
     "provider": "gemini",
     "apiKey": "YOUR_API_KEY"
@@ -53,14 +66,17 @@ node scripts/wechat-draft.js config --appid YOUR_APPID --secret YOUR_SECRET
 ### 基础用法
 
 ```bash
-# 手动指定封面图
+# 使用默认账号
 node scripts/wechat-draft.js --file article.md --title "文章标题" --thumb cover.png
+
+# 使用指定账号（矩阵号）
+node scripts/wechat-draft.js --file article.md --title "文章标题" --account tech
 
 # 自动生成封面图
 node scripts/wechat-draft.js --file article.md --title "文章标题" --generate-cover
 
-# 指定封面图风格
-node scripts/wechat-draft.js --file article.md --title "文章标题" --generate-cover --cover-style cyberpunk
+# 查看已配置账号
+node scripts/wechat-draft.js list
 ```
 
 ### 完整参数
@@ -72,9 +88,43 @@ node scripts/wechat-draft.js --file article.md --title "文章标题" --generate
 | `--author` | `-a` | 作者名 |
 | `--digest` | `-d` | 文章摘要 |
 | `--thumb` | | 封面图路径（手动指定） |
+| `--account` | | 矩阵号账号名称（选择账号） |
 | `--generate-cover` | | 自动生成封面图 |
 | `--cover-style` | | 封面图风格 |
 | `--cover-output` | | 封面图输出路径（默认 cover.png） |
+
+### 矩阵号配置示例
+
+在 `~/.wechat-draft.json` 中：
+
+```json
+{
+  "accounts": {
+    "main": {
+      "appid": "wxabc123...",
+      "secret": "主号Secret",
+      "name": "主账号",
+      "defaultAuthor": "编辑部"
+    },
+    "tech": {
+      "appid": "wxdef456...",
+      "secret": "技术号Secret",
+      "name": "技术团队",
+      "defaultAuthor": "技术团队"
+    },
+    "news": {
+      "appid": "wxghi789...",
+      "secret": "新闻号Secret",
+      "name": "新闻资讯"
+    }
+  },
+  "defaultAccount": "main",
+  "imageGeneration": {
+    "provider": "gemini",
+    "apiKey": "AIza..."
+  }
+}
+```
 
 ### 支持的封面图风格
 
@@ -126,6 +176,7 @@ node scripts/wechat-draft.js --file article.md --title "文章标题" --generate
 2. **IP 白名单**：需将服务器 IP 添加到公众号后台
 3. **封面图要求**：建议尺寸 900×383，不超过 2MB
 4. **图像生成**：未配置时跳过，不影响草稿创建
+5. **矩阵号 Token 缓存**：每个账号的 access_token 独立缓存，避免冲突
 
 ## 项目结构
 

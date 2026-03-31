@@ -16,7 +16,7 @@ const mcpClient = require('./mcp-client.js');
 
 // 配置
 const CONFIG_PATH = path.join(process.env.HOME || '', '.wechat-draft.json');
-const TOKEN_CACHE_PATH = path.join(process.env.HOME || '', '.wechat-token.json');
+const TOKEN_CACHE_DIR = path.join(process.env.HOME || '', '.wechat-tokens');
 
 // 解析命令行参数
 function parseArgs() {
@@ -29,6 +29,8 @@ function parseArgs() {
     thumb: null,
     content: null,
     command: null,
+    account: null,  // 矩阵号账号名称
+    accountName: null,  // 矩阵号显示名称
     generateCover: false,
     coverStyle: 'minimalist',
     coverOutput: null
@@ -55,6 +57,9 @@ function parseArgs() {
       case '--thumb':
         options.thumb = args[++i];
         break;
+      case '--account':
+        options.account = args[++i];
+        break;
       case '--generate-cover':
         options.generateCover = true;
         break;
@@ -67,11 +72,17 @@ function parseArgs() {
       case 'config':
         options.command = 'config';
         break;
+      case 'list':
+        options.command = 'list';
+        break;
       case '--appid':
         options.appid = args[++i];
         break;
       case '--secret':
         options.secret = args[++i];
+        break;
+      case '--account-name':
+        options.accountName = args[++i];
         break;
       case '--gemini-key':
         options.geminiKey = args[++i];
@@ -92,11 +103,13 @@ function parseArgs() {
 
 function printHelp() {
   console.log(`
-微信公众号草稿工具
+微信公众号草稿工具 - 支持矩阵号
 
 用法:
   wechat-draft --file article.md --title "标题"
+  wechat-draft --file article.md --title "标题" --account "子账号名"
   wechat-draft --file article.md --title "标题" --generate-cover
+  wechat-draft list                    # 列出所有配置的账号
 
 选项:
   --file, -f     Markdown 文件路径
@@ -104,6 +117,7 @@ function printHelp() {
   --author, -a   作者名
   --digest, -d   摘要
   --thumb        封面图路径（手动指定）
+  --account      矩阵号账号名称（配置多账号时使用）
 
 封面图生成:
   --generate-cover    根据文章内容自动生成封面图
@@ -112,6 +126,33 @@ function printHelp() {
 
 配置:
   wechat-draft config --appid YOUR_ID --secret YOUR_SECRET
+  wechat-draft config --account "子账号名" --appid YOUR_ID --secret YOUR_SECRET
+
+矩阵号配置（多账号）:
+  在 ~/.wechat-draft.json 中配置:
+  {
+    "accounts": {
+      "main": {
+        "appid": "wx主号ID",
+        "secret": "主号Secret",
+        "name": "主账号",
+        "defaultAuthor": "编辑部"
+      },
+      "tech": {
+        "appid": "wx技术号ID",
+        "secret": "技术号Secret",
+        "name": "技术账号",
+        "defaultAuthor": "技术团队"
+      },
+      "news": {
+        "appid": "wx新闻号ID",
+        "secret": "新闻号Secret",
+        "name": "新闻账号"
+      }
+    },
+    "defaultAccount": "main",
+    "imageGeneration": { ... }
+  }
 
 图像生成配置（可选）:
   在 ~/.wechat-draft.json 中添加:
@@ -131,8 +172,8 @@ function printHelp() {
   siliconflow - SiliconFlow
 
 环境变量:
-  WECHAT_APPID    公众号 AppID
-  WECHAT_SECRET   公众号 AppSecret
+  WECHAT_APPID    公众号 AppID（单账号模式）
+  WECHAT_SECRET   公众号 AppSecret（单账号模式）
 
 图片风格说明:
   minimalist  - 极简扁平风格（默认）
@@ -143,13 +184,16 @@ function printHelp() {
 `);
 }
 
-// 读取配置
-function loadConfig() {
+// 读取配置（支持矩阵号）
+function loadConfig(accountName = null) {
   const config = {
     appid: process.env.WECHAT_APPID,
     secret: process.env.WECHAT_SECRET,
     defaultAuthor: null,
-    defaultThumb: null
+    defaultThumb: null,
+    accounts: {},
+    defaultAccount: null,
+    imageGeneration: null
   };
 
   if (fs.existsSync(CONFIG_PATH)) {
@@ -157,15 +201,51 @@ function loadConfig() {
     Object.assign(config, fileConfig);
   }
 
+  // 矩阵号模式：选择账号
+  if (accountName) {
+    if (!config.accounts[accountName]) {
+      console.error(`错误: 未找到账号 "${accountName}"`);
+      console.error('已配置账号:', Object.keys(config.accounts).join(', ') || '无');
+      process.exit(1);
+    }
+    const account = config.accounts[accountName];
+    return {
+      appid: account.appid,
+      secret: account.secret,
+      defaultAuthor: account.defaultAuthor || config.defaultAuthor,
+      defaultThumb: account.defaultThumb || config.defaultThumb,
+      imageGeneration: config.imageGeneration,  // 共用图像生成配置
+      accountName: accountName,
+      accountDisplayName: account.name || accountName
+    };
+  }
+
+  // 默认账号模式
+  if (config.accounts && config.defaultAccount) {
+    const defaultAccount = config.accounts[config.defaultAccount];
+    if (defaultAccount) {
+      return {
+        appid: defaultAccount.appid,
+        secret: defaultAccount.secret,
+        defaultAuthor: defaultAccount.defaultAuthor || config.defaultAuthor,
+        defaultThumb: defaultAccount.defaultThumb || config.defaultThumb,
+        imageGeneration: config.imageGeneration,
+        accountName: config.defaultAccount,
+        accountDisplayName: defaultAccount.name || config.defaultAccount
+      };
+    }
+  }
+
+  // 单账号模式（环境变量或配置文件顶层）
   if (!config.appid || !config.secret) {
     console.error('错误: 未配置 AppID 或 Secret');
     console.error('请运行: wechat-draft config --appid YOUR_ID --secret YOUR_SECRET');
     console.error('或设置环境变量: WECHAT_APPID, WECHAT_SECRET');
+    console.error('或配置矩阵号: ~/.wechat-draft.json 中的 accounts 字段');
     process.exit(1);
   }
 
   // 图像生成配置（可选）
-  // 格式: { provider, apiKey, model, endpoint }
   if (!config.imageGeneration) {
     console.log('提示: 未配置图像生成，封面图生成功能将跳过');
     console.log('      可通过配置 imageGeneration 启用');
@@ -174,16 +254,78 @@ function loadConfig() {
   return config;
 }
 
-// 保存配置
+// 列出所有账号
+function listAccounts() {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.log('未找到配置文件:', CONFIG_PATH);
+    console.log('请先运行: wechat-draft config --appid YOUR_ID --secret YOUR_SECRET');
+    return;
+  }
+
+  const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  
+  if (fileConfig.accounts && Object.keys(fileConfig.accounts).length > 0) {
+    console.log('\n已配置的矩阵号账号:');
+    console.log('=====================\n');
+    
+    for (const [key, account] of Object.entries(fileConfig.accounts)) {
+      const isDefault = key === fileConfig.defaultAccount;
+      console.log(`${isDefault ? '★ ' : '  '}${key}`);
+      console.log(`    名称: ${account.name || key}`);
+      console.log(`    AppID: ${account.appid}`);
+      console.log(`    默认作者: ${account.defaultAuthor || '未设置'}`);
+      console.log('');
+    }
+    
+    console.log(`默认账号: ${fileConfig.defaultAccount || '未设置'}`);
+    console.log('\n使用方式:');
+    console.log('  wechat-draft --file article.md --title "标题"              # 使用默认账号');
+    console.log('  wechat-draft --file article.md --title "标题" --account tech  # 使用指定账号');
+  } else {
+    console.log('\n单账号配置:');
+    console.log('============\n');
+    console.log(`AppID: ${fileConfig.appid || process.env.WECHAT_APPID || '未配置'}`);
+    console.log(`Secret: ${fileConfig.secret ? '已配置' : '未配置'}`);
+    
+    console.log('\n要配置矩阵号，请在 ~/.wechat-draft.json 中添加 accounts 字段');
+  }
+}
+
+// 保存配置（支持矩阵号）
 function saveConfig(options) {
   const config = {};
   if (fs.existsSync(CONFIG_PATH)) {
     Object.assign(config, JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')));
   }
   
-  if (options.appid) config.appid = options.appid;
-  if (options.secret) config.secret = options.secret;
-  if (options.geminiKey) config.geminiKey = options.geminiKey;
+  // 矩阵号模式：添加账号
+  if (options.account) {
+    if (!config.accounts) config.accounts = {};
+    
+    config.accounts[options.account] = {
+      appid: options.appid || config.accounts[options.account]?.appid,
+      secret: options.secret || config.accounts[options.account]?.secret,
+      name: options.accountName || config.accounts[options.account]?.name || options.account
+    };
+    
+    // 如果是第一个账号，设为默认
+    if (Object.keys(config.accounts).length === 1) {
+      config.defaultAccount = options.account;
+    }
+    
+    console.log(`✓ 账号 "${options.account}" 已配置`);
+  } else {
+    // 单账号模式
+    if (options.appid) config.appid = options.appid;
+    if (options.secret) config.secret = options.secret;
+  }
+  
+  if (options.geminiKey) {
+    config.imageGeneration = {
+      provider: 'gemini',
+      apiKey: options.geminiKey
+    };
+  }
   
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   console.log('配置已保存到:', CONFIG_PATH);
@@ -225,11 +367,20 @@ function request(url, options = {}) {
   });
 }
 
-// 获取 access_token
+// 获取 access_token（支持矩阵号缓存）
 async function getAccessToken(config) {
+  // 确保 token 缓存目录存在
+  if (!fs.existsSync(TOKEN_CACHE_DIR)) {
+    fs.mkdirSync(TOKEN_CACHE_DIR, { recursive: true });
+  }
+  
+  // 根据账号名生成缓存文件名
+  const accountKey = config.accountName || config.appid;
+  const tokenCachePath = path.join(TOKEN_CACHE_DIR, `${accountKey}.json`);
+  
   // 检查缓存
-  if (fs.existsSync(TOKEN_CACHE_PATH)) {
-    const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_PATH, 'utf8'));
+  if (fs.existsSync(tokenCachePath)) {
+    const cache = JSON.parse(fs.readFileSync(tokenCachePath, 'utf8'));
     if (cache.expires > Date.now()) {
       return cache.token;
     }
@@ -246,9 +397,10 @@ async function getAccessToken(config) {
   // 缓存 token（提前5分钟过期）
   const cache = {
     token: result.access_token,
-    expires: Date.now() + (result.expires_in - 300) * 1000
+    expires: Date.now() + (result.expires_in - 300) * 1000,
+    account: accountKey
   };
-  fs.writeFileSync(TOKEN_CACHE_PATH, JSON.stringify(cache));
+  fs.writeFileSync(tokenCachePath, JSON.stringify(cache));
 
   return result.access_token;
 }
@@ -405,6 +557,12 @@ async function main() {
     return;
   }
 
+  // 列出账号命令
+  if (options.command === 'list') {
+    listAccounts();
+    return;
+  }
+
   // 检查必要参数
   if (!options.title) {
     console.error('错误: 缺少文章标题');
@@ -437,10 +595,14 @@ async function main() {
   }
 
   try {
-    const config = loadConfig();
+    // 加载配置（支持矩阵号选择）
+    const config = loadConfig(options.account);
 
     console.log('正在处理...');
     console.log('标题:', options.title);
+    if (config.accountDisplayName) {
+      console.log('账号:', config.accountDisplayName);
+    }
 
     // 转换 Markdown
     const html = markdownToWechatHtml(markdown);
@@ -504,6 +666,9 @@ async function main() {
     });
 
     console.log('\n✅ 草稿创建成功!');
+    if (config.accountDisplayName) {
+      console.log('账号:', config.accountDisplayName);
+    }
     console.log('Media ID:', mediaId);
     console.log('\n请在微信公众平台编辑和发布草稿。');
 
