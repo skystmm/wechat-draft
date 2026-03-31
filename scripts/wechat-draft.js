@@ -33,7 +33,8 @@ function parseArgs() {
     accountName: null,  // 矩阵号显示名称
     generateCover: false,
     coverStyle: 'minimalist',
-    coverOutput: null
+    coverOutput: null,
+    coverPrompt: null  // 自定义封面图提示词
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -68,6 +69,9 @@ function parseArgs() {
         break;
       case '--cover-output':
         options.coverOutput = args[++i];
+        break;
+      case '--cover-prompt':
+        options.coverPrompt = args[++i];
         break;
       case 'config':
         options.command = 'config';
@@ -123,6 +127,7 @@ function printHelp() {
   --generate-cover    根据文章内容自动生成封面图
   --cover-style       图片风格（minimalist/threeD/vector/cyberpunk/ink）
   --cover-output      封面图输出路径（默认 cover.png）
+  --cover-prompt      自定义封面图提示词（跳过自动生成，直接使用指定提示词）
 
 配置:
   wechat-draft config --appid YOUR_ID --secret YOUR_SECRET
@@ -471,13 +476,50 @@ function markdownToWechatHtml(markdown) {
   // 斜体
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
 
-  // 代码块
+  // 代码块（支持 JSON 格式化）
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-    return `<pre style="background: #f6f6f6; padding: 15px; border-radius: 5px; overflow-x: auto; margin: 15px 0;"><code style="font-family: Consolas, Monaco, monospace; font-size: 14px; color: #333;">${escapeHtml(code.trim())}</code></pre>`;
+    let formattedCode = code.trim();
+    
+    // JSON 格式化
+    if (lang === 'json' || lang === 'JSON') {
+      try {
+        const jsonObj = JSON.parse(formattedCode);
+        formattedCode = JSON.stringify(jsonObj, null, 2);
+      } catch (e) {
+        // 解析失败，保持原样
+      }
+    }
+    
+    // 转义 HTML 并保持换行格式
+    const escapedCode = escapeHtml(formattedCode)
+      .replace(/\n/g, '<br/>')
+      .replace(/  /g, '&nbsp;&nbsp;');
+    
+    return `<pre style="background: #f6f6f6; padding: 15px; border-radius: 5px; overflow-x: auto; margin: 15px 0; white-space: pre-wrap; word-wrap: break-word;"><code style="font-family: Consolas, Monaco, monospace; font-size: 14px; color: #333; line-height: 1.6;">${escapedCode}</code></pre>`;
   });
 
   // 行内代码
   html = html.replace(/`([^`]+)`/g, '<code style="background: #f6f6f6; padding: 2px 6px; border-radius: 3px; font-family: Consolas, Monaco, monospace; font-size: 14px;">$1</code>');
+
+  // 表格（微信公众号支持表格）
+  html = html.replace(/^\|(.+)\|\n\|[-:| ]+\|\n((?:\|.+\|\n?)+)/gm, (match, headerRow, bodyRows) => {
+    // 解析表头
+    const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+    const headerHtml = headers.map(h => 
+      `<th style="border: 1px solid #ddd; padding: 8px 12px; background: #f5f5f5; font-weight: bold; text-align: left;">${h}</th>`
+    ).join('');
+    
+    // 解析表体
+    const rows = bodyRows.trim().split('\n').map(row => {
+      const cells = row.split('|').map(c => c.trim()).filter(c => c);
+      const cellsHtml = cells.map(c => 
+        `<td style="border: 1px solid #ddd; padding: 8px 12px;">${c}</td>`
+      ).join('');
+      return `<tr>${cellsHtml}</tr>`;
+    }).join('');
+    
+    return `<table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;"><thead><tr>${headerHtml}</tr></thead><tbody>${rows}</tbody></table>`;
+  });
 
   // 引用
   html = html.replace(/^> (.*$)/gm, '<blockquote style="border-left: 4px solid #42b983; padding-left: 15px; margin: 15px 0; color: #666; font-style: italic;">$1</blockquote>');
@@ -633,11 +675,21 @@ async function main() {
             style: options.coverStyle
           };
           
-          thumbPath = await mcpClient.generateCoverFromContent(
-            markdown, 
-            imageConfig, 
-            outputPath
-          );
+          // 如果提供了自定义提示词，直接使用；否则自动生成
+          if (options.coverPrompt) {
+            console.log('  使用自定义提示词');
+            thumbPath = await mcpClient.generateCoverWithPrompt(
+              options.coverPrompt,
+              imageConfig,
+              outputPath
+            );
+          } else {
+            thumbPath = await mcpClient.generateCoverFromContent(
+              markdown,
+              imageConfig,
+              outputPath
+            );
+          }
           console.log('✓ 封面图生成完成:', thumbPath);
         } catch (error) {
           console.log('⚠ 封面图生成失败:', error.message);
